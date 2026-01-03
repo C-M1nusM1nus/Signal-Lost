@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Signal Lost</title>
+
+<!--
+Signal Lost
+------------
+A minimalist top-down puzzle game.
+
+Objective:
+Rotate tiles to connect all signal sources to receivers
+within a limited number of moves.
+
+Controls:
+- Click a tile to rotate it
+- Restart button resets the level
+
+Technical:
+- Pure HTML, CSS, JavaScript
+- HTML5 Canvas
+- No external libraries
+- Runs locally
+-->
+
+<style>
+  body {
+    margin: 0;
+    background: #0e0e11;
+    color: #eaeaf0;
+    font-family: system-ui, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+  }
+
+  #gameContainer {
+    width: 420px;
+    text-align: center;
+  }
+
+  canvas {
+    background: #15151b;
+    border-radius: 12px;
+    cursor: pointer;
+  }
+
+  h1 {
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  #info {
+    font-size: 14px;
+    opacity: 0.8;
+    margin-bottom: 8px;
+  }
+
+  #ui {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+    align-items: center;
+  }
+
+  button {
+    background: #2a2a35;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+
+  button:hover {
+    background: #3a3a48;
+  }
+
+  #overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    color: #fff;
+  }
+
+  #overlay button {
+    margin-top: 10px;
+  }
+</style>
+</head>
+<body>
+
+<div id="gameContainer">
+  <h1>Signal Lost</h1>
+  <div id="info"></div>
+  <canvas id="canvas" width="400" height="400"></canvas>
+
+  <div id="ui">
+    <div id="moves"></div>
+    <button id="restart">Restart</button>
+  </div>
+</div>
+
+<div id="overlay">
+  <h2 id="overlayText"></h2>
+  <button id="nextLevel">Continue</button>
+</div>
+
+<script>
+/* ============================
+   Audio (Web Audio API)
+============================ */
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playClick() {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.frequency.value = 400;
+  gain.gain.value = 0.05;
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.05);
+}
+
+function playSuccess() {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = "triangle";
+  osc.frequency.value = 700;
+  gain.gain.value = 0.08;
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.3);
+}
+
+/* ============================
+   Game Constants
+============================ */
+const TILE_SIZE = 80;
+const GRID = 5;
+
+const DIRS = [
+  { x: 0, y: -1 }, // up
+  { x: 1, y: 0 },  // right
+  { x: 0, y: 1 },  // down
+  { x: -1, y: 0 }  // left
+];
+
+/* ============================
+   Levels
+============================ */
+const levels = [
+  {
+    text: "Reconnect the signal.",
+    moves: 6,
+    grid: [
+      ["S-", "-",  "C",  "  ", "  "],
+      ["  ", "  ", "-", "  ", "  "],
+      ["  ", "  ", "C", "-", "-R"],
+      ["  ", "  ", "  ", "  ", "  "],
+      ["  ", "  ", "  ", "  ", "  "],
+    ]
+  },
+  {
+    text: "Corners change direction.",
+    moves: 7,
+    grid: [
+      ["S-", "L",  "  ", "  ", "  "],
+      ["  ", "L",  "-",  "-",  "-R"],
+      ["  ", "  ", "  ", "  ", "  "],
+      ["  ", "  ", "  ", "  ", "  "],
+      ["  ", "  ", "  ", "  ", "  "],
+    ]
+  },
+  {
+    text: "Locked tiles cannot rotate.",
+    moves: 6,
+    grid: [
+      ["S-", "L", "-",  "T!", "  "],
+      ["  ", "C", "  ", "C", "  "],
+      ["  ", "C", "  ", "C", "  "],
+      ["  ", "L", "-", "C", "-R"],
+      ["  ", "  ", "  ", "  ", "  "],
+    ]
+  },
+  {
+    text: "Multiple paths overlap.",
+    moves: 7,
+    grid: [
+      ["S-", "T", "-", "T", "  "],
+      ["  ", "C", "  ", "C", "  "],
+      ["  ", "-", "  ", "C", "  "],
+      ["  ", "L", "-", "T", "-R"],
+      ["  ", "  ", "  ", "  ", "  "],
+    ]
+  },
+  {
+    text: "Two signal sources.",
+    moves: 8,
+    grid: [
+      ["S-", "-", "L", "  ", "  "],
+      ["  ", "  ", "C", "-", "-R"],
+      ["  ", "  ", "  ", "  ", "  "],
+      ["  ", "  ", "C", "-", "-R"],
+      ["S-", "-", "L", "  ", "  "],
+    ]
+  },
+  {
+    text: "Decoy paths waste moves.",
+    moves: 6,
+    grid: [
+      ["  ", "  ", "C", "-", "-R"],
+      ["  ", "  ", "-", "  ", "  "],
+      ["S-", "-", "L", "  ", "  "],
+      ["  ", "  ", "-", "  ", "  "],
+      ["  ", "  ", "C", "-", "  "],
+    ]
+  },
+  {
+    text: "Careful planning required.",
+    moves: 7,
+    grid: [
+      ["  ", "  ", "C", "-", "L!"],
+      ["  ", "  ",  "-", "  ", "-"],
+      ["S-", "-",  "T!", "L", "  "],
+      ["  ", "  ", "-", "-", "  "],
+      ["  ", "  ", "C", "C", "-R"],
+    ]
+  },
+  {
+    text: "Final network.",
+    moves: 8,
+    grid: [
+      ["  ", "T", "T!", "C", "-R"],
+      ["S-", "L", "  ", "T!", "  "],
+      ["  ", "T", "-", "C", "-R"],
+      ["S-", "L", "  ", "-", "  "],
+      ["  ", "C", "-", "C", "-R"],
+    ]
+  }
+];
+
+/* ============================
+   Tile Helpers
+============================ */
+function tileConnections(type, rot) {
+  const base = {
+    "-": [1, 3],
+    "C": [0, 1, 2, 3],
+    "L": [0, 1],
+    "T": [0, 1, 3],
+    "S": [1],
+    "R": []
+  }[type];
+
+  return base.map(d => (d + rot) % 4);
+}
+
+/* ============================
+   Game State
+============================ */
+let levelIndex = 0;
+let tiles = [];
+let movesLeft = 0;
+let won = false;
+let lost = false;
+let activeSignal = null;
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const info = document.getElementById("info");
+const movesLabel = document.getElementById("moves");
+const overlay = document.getElementById("overlay");
+const overlayText = document.getElementById("overlayText");
+
+/* ============================
+   Level Load
+============================ */
+function loadLevel(i) {
+  const lvl = levels[i];
+  tiles = [];
+  movesLeft = lvl.moves;
+  won = false;
+  lost = false;
+
+  info.textContent = lvl.text;
+
+  for (let y = 0; y < GRID; y++) {
+    tiles[y] = [];
+    for (let x = 0; x < GRID; x++) {
+      const cell = lvl.grid[y][x];
+      if (cell.trim() === "") {
+        tiles[y][x] = null;
+      } else {
+        let type = null;
+
+        if (cell.includes("S")) type = "S";
+        else if (cell.includes("R")) type = "R";
+        else if (cell.includes("T")) type = "T";
+        else if (cell.includes("L")) type = "L";
+        else if (cell.includes("C")) type = "C";
+        else if (cell.includes("-")) type = "-";
+
+        tiles[y][x] = {
+          type,
+          rot: 0,
+          locked: cell.includes("!")
+        };
+      }
+    }
+  }
+
+  overlay.style.display = "none";
+  update();
+}
+
+/* ============================
+   Signal Flow
+============================ */
+function computeSignal() {
+  const active = Array.from({ length: GRID }, () =>
+    Array(GRID).fill(false)
+  );
+
+  function dfs(x, y, fromDir) {
+    if (x < 0 || y < 0 || x >= GRID || y >= GRID) return;
+    const tile = tiles[y][x];
+    if (!tile) return;
+
+    if (tile.type === "R") {
+      active[y][x] = true;
+      return;
+    }
+
+    const conns = tileConnections(tile.type, tile.rot);
+    if (fromDir !== null && !conns.includes(fromDir)) return;
+    if (active[y][x]) return;
+
+    active[y][x] = true;
+
+    conns.forEach(d => {
+      const nx = x + DIRS[d].x;
+      const ny = y + DIRS[d].y;
+      dfs(nx, ny, (d + 2) % 4);
+    });
+  }
+
+  for (let y = 0; y < GRID; y++) {
+    for (let x = 0; x < GRID; x++) {
+      const t = tiles[y][x];
+      if (t && t.type === "S") dfs(x, y, null);
+    }
+  }
+
+  return active;
+}
+
+/* ============================
+   Draw
+============================ */
+function drawTile(x, y, tile, active) {
+  const cx = x * TILE_SIZE + TILE_SIZE / 2;
+  const cy = y * TILE_SIZE + TILE_SIZE / 2;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(tile.rot * Math.PI / 2);
+
+  ctx.strokeStyle = active ? "#6df2c2" : "#555";
+  ctx.lineWidth = 6;
+  ctx.lineCap = "round";
+
+  ctx.beginPath();
+
+  if (tile.type === "-" || tile.type === "C") {
+    ctx.moveTo(-30, 0);
+    ctx.lineTo(30, 0);
+  }
+  if (tile.type === "C") {
+    ctx.moveTo(0, -30);
+    ctx.lineTo(0, 30);
+  }
+  if (tile.type === "L") {
+    ctx.moveTo(0, -30);
+    ctx.lineTo(0, 0);
+    ctx.lineTo(30, 0);
+  }
+  if (tile.type === "T") {
+    ctx.moveTo(-30, 0);
+    ctx.lineTo(30, 0);
+    ctx.moveTo(0, 0);
+    ctx.lineTo(0, -30);
+  }
+  if (tile.type === "S") {
+    ctx.moveTo(0, 0);
+    ctx.lineTo(30, 0);
+  }
+  if (tile.type === "R") {
+    ctx.arc(0, 0, 12, 0, Math.PI * 2);
+  }
+
+  ctx.stroke();
+  ctx.restore();
+
+  if (tile.locked) {
+    ctx.fillStyle = "#a44";
+    ctx.fillRect(x * TILE_SIZE + 4, y * TILE_SIZE + 4, 8, 8);
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const active = computeSignal();
+
+  for (let y = 0; y < GRID; y++) {
+    for (let x = 0; x < GRID; x++) {
+      if (tiles[y][x]) {
+        drawTile(x, y, tiles[y][x], active[y][x]);
+      }
+    }
+  }
+
+  movesLabel.textContent = `Moves: ${movesLeft}`;
+}
+
+/* ============================
+   Win / Lose
+============================ */
+function checkWin(active) {
+  if (won) return;
+
+  let allReceiversActive = true;
+  let receiverCount = 0;
+
+  for (let y = 0; y < GRID; y++) {
+    for (let x = 0; x < GRID; x++) {
+      const t = tiles[y][x];
+      if (t && t.type === "R") {
+        receiverCount++;
+        if (!active[y][x]) {
+          allReceiversActive = false;
+        }
+      }
+    }
+  }
+
+  if (receiverCount === 0) {
+    return;
+  }
+
+  if (allReceiversActive && !won) {
+    won = true;
+    playSuccess();
+    overlayText.textContent =
+      levelIndex === levels.length - 1
+        ? "All Signals Restored"
+        : "Signal Restored";
+    overlay.style.display = "flex";
+  }
+
+  if (movesLeft <= 0 && !won && !lost) {
+    lost = true;
+    overlayText.textContent = "Signal Lost";
+    overlay.style.display = "flex";
+  }
+}
+
+/* ============================
+   Input
+============================ */
+canvas.addEventListener("click", e => {
+  if (won) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const x = Math.floor((e.clientX - rect.left) / TILE_SIZE);
+  const y = Math.floor((e.clientY - rect.top) / TILE_SIZE);
+
+  const tile = tiles[y]?.[x];
+  if (!tile || tile.locked || movesLeft <= 0) return;
+
+  tile.rot = (tile.rot + 1) % 4;
+  movesLeft--;
+  playClick();
+  update();
+});
+
+document.getElementById("restart").onclick = () => loadLevel(levelIndex);
+document.getElementById("nextLevel").onclick = () => {
+  if (lost) {
+    loadLevel(levelIndex);
+  } else {
+    levelIndex = Math.min(levelIndex + 1, levels.length - 1);
+    loadLevel(levelIndex);
+  }
+};
+
+/* ============================
+   Loop
+============================ */
+function update() {
+  activeSignal = computeSignal();
+  checkWin(activeSignal);
+  draw();
+}
+
+loadLevel(0);
+</script>
+</body>
+</html>
